@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>disable</Nullable>
+        <RootNamespace>SekaiApiModel</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <Folder Include="Sekai\" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="MessagePack" Version="3.1.4" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\SekaiApiModel.Shared\SekaiApiModel.Shared.csproj" />
+    </ItemGroup>
+
+</Project>

@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="SekaiApiModel.Jp/SekaiApiModel.Jp.csproj" />
+  <Project Path="SekaiApiModel.Shared/SekaiApiModel.Shared.csproj" />
+  <Project Path="SelfHostSekai/SelfHostSekai.csproj" />
+</Solution>

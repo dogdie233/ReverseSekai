@@ -2,6 +2,8 @@ import os
 import zlib
 import msgpack
 import json
+import re
+from datetime import datetime
 from mitmproxy import http, ctx
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
@@ -11,28 +13,31 @@ class TrafficDecryptor:
         # 从环境变量读取 Key 和 IV
         self.key = bytes.fromhex(os.getenv("AES_KEY", ""))
         self.iv = bytes.fromhex(os.getenv("AES_IV", ""))
+
+        if not self.key or not self.iv:
+            print("[!] 请确保环境变量 AES_KEY 和 AES_IV 已正确设置为 16 字节的十六进制字符串")
+            exit(1)
         
         self.target_hosts = [
-            "mkcn-prod-public-60001-1.dailygn.com",
-            "mkcn-prod-public-60001-2.dailygn.com"
+            "production-game-api.sekai.colorfulpalette.org",
+            "game-version.sekai.colorfulpalette.org",
         ]
 
+        # --- 新增：日志保存设置 ---
+        self.log_dir = "traffic_logs"
+        if not os.path.exists(self.log_dir):
+            os.makedirs(self.log_dir)
+        # ------------------------
+
     def load(self, loader):
-        """
-        当脚本加载时，自动配置 mitmproxy 的选项
-        """
-        # 只有匹配这两个域名的流量才进行 TLS 解密
-        # 其他流量将直接进行 TCP 转发，不触碰证书，不解析内容
         allow_pattern = "|".join([host.replace(".", r"\.") for host in self.target_hosts])
         ctx.options.allow_hosts = [f"^{allow_pattern}$"]
         print(f"[*] 已设置 TLS 过滤，仅拦截: {self.target_hosts}")
 
     def decrypt_aes_msgpack(self, raw_data):
-        """核心解密逻辑"""
         try:
             cipher = AES.new(self.key, AES.MODE_CBC, self.iv)
             decrypted = unpad(cipher.decrypt(raw_data), AES.block_size)
-            # 尝试解压 (如果解密后是 gzip)
             try:
                 decrypted = zlib.decompress(decrypted, 16 + zlib.MAX_WBITS)
             except:
@@ -42,68 +47,95 @@ class TrafficDecryptor:
             return None
 
     def format_body(self, content, content_type):
-        """根据 Content-Type 解析 Body"""
         if not content:
             return "<Empty Body>"
         
         ct = content_type.lower()
-
-        # 1. JSON 处理
         if "application/json" in ct:
             try:
                 data = json.loads(content.decode('utf-8', 'ignore'))
                 return json.dumps(data, indent=4, ensure_ascii=False)
             except:
                 return content.decode('utf-8', 'replace')
-
-        # 2. 文本处理 (Text, Form-urlencoded, XML等)
         elif "text/" in ct or "application/x-www-form-urlencoded" in ct or "javascript" in ct:
             try:
                 return content.decode('utf-8', 'replace')
             except:
                 return content.hex(' ')
-
-        # 3. 二进制流 (重点处理对象)
         elif "application/octet-stream" in ct:
-            # 尝试 AES 解密
             result = self.decrypt_aes_msgpack(content)
             if result is not None:
                 return f"[AES-Decrypted MsgPack]:\n{json.dumps(result, indent=4, ensure_ascii=False)}"
             else:
-                # 解密失败，打印 Hex
                 return f"[Binary Hex]:\n{content.hex(' ')}"
-
-        # 4. 其他情况
         else:
-            # 默认尝试打印前 100 字节的 Hex
             return f"[Unknown Content-Type: {content_type}]\nHex: {content[:200].hex(' ')} ..."
 
     def request(self, flow: http.HTTPFlow):
-        if flow.request.pretty_host in self.target_hosts:
-            ct = flow.request.headers.get("Content-Type", "")
-            # 使用 raw_content 避免 mitmproxy 自动解压报错
-            body_display = self.format_body(flow.request.raw_content, ct)
-            self.print_log("REQUEST", flow, flow.request.headers, body_display)
+        # 请求阶段仅做标记，通常我们将请求和响应存在一个文件里
+        pass
 
     def response(self, flow: http.HTTPFlow):
         if flow.request.pretty_host in self.target_hosts:
-            ct = flow.response.headers.get("Content-Type", "")
-            body_display = self.format_body(flow.response.raw_content, ct)
-            self.print_log("RESPONSE", flow, flow.response.headers, body_display)
+            # 1. 格式化请求内容
+            req_ct = flow.request.headers.get("Content-Type", "")
+            req_body = self.format_body(flow.request.raw_content, req_ct)
+            
+            # 2. 格式化响应内容
+            res_ct = flow.response.headers.get("Content-Type", "")
+            res_body = self.format_body(flow.response.raw_content, res_ct)
 
-    def print_log(self, direction, flow, headers, body_str):
-        color = "\033[92m" if direction == "REQUEST" else "\033[94m"
-        reset = "\033[0m"
+            # 3. 生成展示用的文本（带颜色）
+            log_content = self.generate_combined_log(flow, req_body, res_body)
+            
+            # 4. 打印到控制台
+            print(log_content)
+
+            # 5. 保存到文件（去除颜色）
+            self.save_log_to_file(flow, log_content)
+
+    def generate_combined_log(self, flow, req_body, res_body):
+        """生成格式化的请求响应对文本"""
+        c_req = "\033[92m" # Green
+        c_res = "\033[94m" # Blue
+        c_rst = "\033[0m"
         
-        print(f"\n{color}{'='*40} {direction} {'='*40}{reset}")
-        print(f"🌐 [URL]    : {flow.request.url}")
-        print(f"📝 [METHOD] : {flow.request.method} | [STATUS]: {getattr(flow.response, 'status_code', 'N/A')}")
-        print(f"🔖 [HEADERS]:")
-        for k, v in headers.items():
-            print(f"   {k}: {v}")
-        print(f"\n📦 [BODY_DATA]:")
-        print(body_str)
-        print(f"{color}{'='*90}{reset}\n")
+        lines = []
+        lines.append(f"\n{c_req}{'='*30} REQUEST {'='*30}{c_rst}")
+        lines.append(f"🌐 [URL]    : {flow.request.url}")
+        lines.append(f"📝 [METHOD] : {flow.request.method}")
+        lines.append(f"🔖 [HEADERS]:")
+        for k, v in flow.request.headers.items():
+            lines.append(f"   {k}: {v}")
+        lines.append(f"\n📦 [BODY_DATA]:\n{req_body}")
+
+        lines.append(f"\n{c_res}{'='*30} RESPONSE (Status: {flow.response.status_code}) {'='*30}{c_rst}")
+        lines.append(f"🔖 [HEADERS]:")
+        for k, v in flow.response.headers.items():
+            lines.append(f"   {k}: {v}")
+        lines.append(f"\n📦 [BODY_DATA]:\n{res_body}")
+        lines.append(f"{'='*70}\n")
+        
+        return "\n".join(lines)
+
+    def save_log_to_file(self, flow, content):
+        """将内容存入文件"""
+        # 移除 ANSI 颜色代码
+        clean_text = re.sub(r'\x1b\[[0-9;]*[mGKF]', '', content)
+        
+        # 生成文件名: 时间_路径.txt (处理掉非法字符)
+        timestamp = datetime.now().strftime("%H%M%S_%f")[:-3]
+        path_name = flow.request.path.split('?')[0].replace('/', '_')[-50:] # 取路径后50位
+        filename = f"{timestamp}{path_name}.txt"
+        
+        filepath = os.path.join(self.log_dir, filename)
+        
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                f.write(clean_text)
+        except Exception as e:
+            print(f"[!] 写入文件失败: {e}")
 
 addons = [
     TrafficDecryptor()

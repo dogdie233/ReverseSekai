@@ -1,4 +1,8 @@
 /.vscode
 node_modules
+__pycache__
 
+# 逆向出来的缓存物
 /Reverse
+# 抓包的导出
+/traffic_logs
