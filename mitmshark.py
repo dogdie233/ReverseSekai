@@ -14,20 +14,33 @@ class TrafficDecryptor:
         self.key = bytes.fromhex(os.getenv("AES_KEY", ""))
         self.iv = bytes.fromhex(os.getenv("AES_IV", ""))
 
+        # configurable options
+        self.save_logs = False  # 是否保存日志到文件
+        self.intercept_enabled = True
+        self.intercept_scheme = "http"
+        self.intercept_host = "127.0.0.1"
+        self.intercept_port = 5000
+        
+        self.api_hosts = [
+            "production-game-api.sekai.colorfulpalette.org"
+        ]
+        self.log_hosts = [
+            "production-game-api.sekai.colorfulpalette.org",
+            "game-version.sekai.colorfulpalette.org",
+            "production-cf2d2388-assetbundle.sekai.colorfulpalette.net",
+        ]
+        
+        self.target_hosts = set(self.api_hosts + self.log_hosts)
+    
         if not self.key or not self.iv:
             print("[!] 请确保环境变量 AES_KEY 和 AES_IV 已正确设置为 16 字节的十六进制字符串")
             exit(1)
-        
-        self.target_hosts = [
-            "production-game-api.sekai.colorfulpalette.org",
-            "game-version.sekai.colorfulpalette.org",
-        ]
+        if self.intercept_enabled:
+            print(f"[*] 已启用流量拦截，目标域名将被重定向到 {self.intercept_host}:{self.intercept_port}")
 
-        # --- 新增：日志保存设置 ---
         self.log_dir = "traffic_logs"
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
-        # ------------------------
 
     def load(self, loader):
         allow_pattern = "|".join([host.replace(".", r"\.") for host in self.target_hosts])
@@ -72,11 +85,15 @@ class TrafficDecryptor:
             return f"[Unknown Content-Type: {content_type}]\nHex: {content[:200].hex(' ')} ..."
 
     def request(self, flow: http.HTTPFlow):
-        # 请求阶段仅做标记，通常我们将请求和响应存在一个文件里
-        pass
+        # 如果开启了拦截且是目标域名，重定向流量到本地服务器
+        if self.intercept_enabled and flow.request.pretty_host in self.api_hosts:
+            flow.request.headers["Nya-Original-Host"] = flow.request.pretty_host
+            flow.request.scheme = self.intercept_scheme
+            flow.request.host = self.intercept_host
+            flow.request.port = self.intercept_port
 
     def response(self, flow: http.HTTPFlow):
-        if flow.request.pretty_host in self.target_hosts:
+        if flow.request.pretty_host in self.target_hosts or flow.request.host == self.intercept_host:
             # 1. 格式化请求内容
             req_ct = flow.request.headers.get("Content-Type", "")
             req_body = self.format_body(flow.request.raw_content, req_ct)
@@ -119,6 +136,8 @@ class TrafficDecryptor:
         return "\n".join(lines)
 
     def save_log_to_file(self, flow, content):
+        if self.save_logs is False:
+            return
         """将内容存入文件"""
         # 移除 ANSI 颜色代码
         clean_text = re.sub(r'\x1b\[[0-9;]*[mGKF]', '', content)

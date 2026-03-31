@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <MasterDbPath>./sekai-master-db-diff</MasterDbPath>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Content Include="$(MasterDbPath)/**/*.json">
+            <Link>MasterDb/%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <AdditionalFiles Include="$(MasterDbPath)/**/*.json" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\SekaiApiModel.Jp\SekaiApiModel.Jp.csproj" />
+      <ProjectReference Include="..\SekaiMasterDb.SourceGenerator\SekaiMasterDb.SourceGenerator\SekaiMasterDb.SourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    </ItemGroup>
+
+</Project>

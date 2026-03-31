@@ -1,17 +1,28 @@
+using System.Text;
+
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+
 using SelfHostSekai.Configuration;
 using SelfHostSekai.Cryptography;
 using SelfHostSekai.Data;
+using SelfHostSekai.Extensions;
 using SelfHostSekai.Formatters;
-using System.Text;
+using SelfHostSekai.Services;
+
+using Yitter.IdGenerator;
+
+// --- 雪花算法配置 ---
+var options = new IdGeneratorOptions(1);
+YitIdHelper.SetIdGenerator(options);
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Register Configuration
 builder.Services.Configure<CryptoOptions>(builder.Configuration.GetSection("Crypto"));
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
+builder.Services.Configure<UserInitOptions>(builder.Configuration.GetSection("UserInit"));
 
 // Register CryptoHelper as Singleton
 var cryptoOptions = builder.Configuration.GetRequiredSection("Crypto").Get<CryptoOptions>();
@@ -31,6 +42,14 @@ builder.Services.AddControllers(options =>
 
 // Cache
 builder.Services.AddMemoryCache();
+
+// Master DB
+builder.Services.AddSekaiMasterDb();
+
+// App Services
+builder.Services.AddScoped<SuiteUserService>();
+builder.Services.AddScoped<UserTutorialService>();
+builder.Services.AddScoped<JwtService>();
 
 // PostgreSQL DB Context
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -56,18 +75,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ValidateLifetime = false,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtOptions.Issuer,
-            ValidAudience = jwtOptions.Audience,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SecretKey))
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SecretKey)),
         };
     });
 
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+builder.Services.AddHttpForwarder();
 
 var app = builder.Build();
 
@@ -83,5 +100,14 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.MapForwarder(
+    "/api/platform-android", 
+    "https://production-game-api.sekai.colorfulpalette.org"
+);
+app.MapForwarder(
+    "/6.3.5/*",
+    "https://game-version.sekai.colorfulpalette.org"
+);
 
 app.Run();

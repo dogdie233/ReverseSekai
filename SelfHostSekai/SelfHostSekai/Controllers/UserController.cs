@@ -1,93 +1,47 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
-using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
+
 using SekaiApiModel.Sekai;
+
 using SelfHostSekai.Constants;
 using SelfHostSekai.Data;
-using SelfHostSekai.Models;
+using SelfHostSekai.Services;
+using SelfHostSekai.Utils;
 
 namespace SelfHostSekai.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/user/{urlUserId:long}")]
 public class UserController : ControllerBase
 {
+    private readonly ILogger<UserController> _logger;
     private readonly AppDbContext _dbContext;
-    private readonly IConfiguration _configuration;
+    private readonly JwtService _jwtService;
+    private readonly SuiteUserService _suiteUserService;
 
-    public UserController(AppDbContext dbContext, IConfiguration configuration)
+    public UserController(AppDbContext dbContext, JwtService jwtService, SuiteUserService suiteUserService, ILogger<UserController> logger)
     {
         _dbContext = dbContext;
-        _configuration = configuration;
+        _jwtService = jwtService;
+        _suiteUserService = suiteUserService;
+        _logger = logger;
     }
 
-    [HttpPut("{urlUserId}/auth")]
-    public async Task<IActionResult> Auth(string urlUserId, [FromBody] UserAuthRequest request)
+    [HttpPut("auth")]
+    public async Task<IActionResult> Auth(long urlUserId, [FromBody] UserAuthRequest request, [FromQuery] bool refreshUpdatedResources = false)
     {
-        var bypassValidation = _configuration.GetValue<bool>("Auth:BypassJwtValidation", false);
-        var jwtKey = _configuration["Auth:JwtKey"] ?? "SecretKeyForJwtAuthentication1234!";
+        var validatedUserId = _jwtService.ValidateAndGetUserIdFromCredential(request.credential);
+        if (validatedUserId == null) return Unauthorized();
+        var userId = validatedUserId.Value;
 
-        string userId;
-        if (bypassValidation)
+        var userExist = await _suiteUserService.IsUserExistAsync(userId);
+        if (!userExist)
         {
-            var handler = new JwtSecurityTokenHandler();
-            var jwtToken = handler.ReadJwtToken(request.credential);
-            var userIdClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == "userId");
-            if (userIdClaim == null) return Unauthorized();
-            userId = userIdClaim.Value;
-        }
-        else
-        {
-            var handler = new JwtSecurityTokenHandler();
-            try
-            {
-                var validationParameters = new TokenValidationParameters
-                {
-                    ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-                    ValidateIssuer = false,
-                    ValidateAudience = false,
-                    ValidateLifetime = false
-                };
-
-                var principal = handler.ValidateToken(request.credential, validationParameters, out var validatedToken);
-                var userIdClaim = principal.Claims.FirstOrDefault(c => c.Type == "userId");
-                if (userIdClaim == null) return Unauthorized();
-                userId = userIdClaim.Value;
-            }
-            catch
-            {
-                return Unauthorized();
-            }
-        }
-
-        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId);
-        if (user == null)
-        {
-            user = new User { Id = userId };
-            _dbContext.Users.Add(user);
-            await _dbContext.SaveChangesAsync();
+            await _suiteUserService.RegisterUser(userId, null, null, null);
         }
 
         var sessionTokenGuid = Guid.NewGuid().ToString();
-        
-        var tokenHandler = new JwtSecurityTokenHandler();
-        var key = Encoding.UTF8.GetBytes(jwtKey);
-        var tokenDescriptor = new SecurityTokenDescriptor
-        {
-            Claims = new Dictionary<string, object>
-            {
-                { "sessionToken", sessionTokenGuid },
-                { "userId", userId }
-            },
-            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
-        };
-        var token = tokenHandler.CreateToken(tokenDescriptor);
-        var sessionTokenString = tokenHandler.WriteToken(token);
+        var sessionTokenString = _jwtService.GenerateSessionToken(userId, sessionTokenGuid);
 
         var response = new UserAuthResponse
         {
@@ -100,11 +54,38 @@ public class UserController : ControllerBase
             assetHash = GameConstants.AssetHash,
             appVersionStatus = GameConstants.AppVersionStatus,
             isStreamingVirtualLiveForceOpenUser = GameConstants.IsStreamingVirtualLiveForceOpenUser,
-            updatedResources = new SuiteUser(), // Cannot be null normally based on sample
             suiteMasterSplitPath = GameConstants.SuiteMasterSplitPath,
             obtainedBondsRewardIds = GameConstants.ObtainedBondsRewardIds
         };
 
+        if (refreshUpdatedResources)
+        {
+            // TODO: Implement actual logic to determine which resources need to be updated for the user
+            response.updatedResources = new SuiteUser();
+        }
+
         return Ok(response);
+    }
+
+    [HttpPost("{reportId:guid}")]
+    public IActionResult ReportEnvironment(long urlUserId, Guid reportId, [FromBody] UserParamRequest request)
+    {
+        return Ok();
+    }
+    
+    [HttpPatch]
+    public async Task<IActionResult> UpdateUserInfo(long urlUserId, [FromBody] SuiteUser request)
+    {
+        var userId = User.GetUserIdRequired();
+
+        var suite = new SuiteUser();
+        
+        if (request.userGamedata is { name: not null })
+            suite.userGamedata = await _suiteUserService.UpdateUserNameAsync(userId, request.userGamedata.name);
+
+        return Ok(new SuiteUserCommonResponse
+        {
+            updatedResources = suite
+        });
     }
 }
