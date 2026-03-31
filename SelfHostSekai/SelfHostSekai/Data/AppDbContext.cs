@@ -17,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<UserDeck> UserDecks { get; set; }
     public DbSet<UserMusicResult> UserMusicResults { get; set; }
     public DbSet<UserMusic> UserMusics { get; set; }
+    public DbSet<UserArea> UserAreas { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -49,6 +50,24 @@ public class AppDbContext : DbContext
         
         modelBuilder.Entity<User>()
             .HasMany(u => u.Musics)
+            .WithOne(m => m.User)
+            .HasForeignKey(m => m.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+        
+        modelBuilder.Entity<User>()
+            .HasMany(u => u.Areas)
+            .WithOne(m => m.User)
+            .HasForeignKey(m => m.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+        
+        modelBuilder.Entity<User>()
+            .HasMany(u => u.Unlocks)
+            .WithOne(m => m.User)
+            .HasForeignKey(m => m.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+        
+        modelBuilder.Entity<User>()
+            .HasMany(u => u.Characters)
             .WithOne(m => m.User)
             .HasForeignKey(m => m.UserId)
             .OnDelete(DeleteBehavior.Cascade);
@@ -90,10 +109,6 @@ public class AppDbContext : DbContext
             .HasConversion(v => JsonSerializer.Serialize(v, jsonOptions), v => JsonSerializer.Deserialize<SekaiApiModel.Sekai.UserAutoLive>(v, jsonOptions));
 
         // 1:N 集合数组 JSON
-        modelBuilder.Entity<User>().Property(u => u.Areas).HasColumnType("jsonb")
-            .HasConversion(v => JsonSerializer.Serialize(v, jsonOptions), v => JsonSerializer.Deserialize<List<SekaiApiModel.Sekai.UserArea>>(v, jsonOptions)!);
-        modelBuilder.Entity<User>().Property(u => u.ActionSets).HasColumnType("jsonb")
-            .HasConversion(v => JsonSerializer.Serialize(v, jsonOptions), v => JsonSerializer.Deserialize<List<SekaiApiModel.Sekai.UserActionSet>>(v, jsonOptions)!);
         modelBuilder.Entity<User>().Property(u => u.UnitEpisodeStatuses).HasColumnType("jsonb")
             .HasConversion(v => JsonSerializer.Serialize(v, jsonOptions), v => JsonSerializer.Deserialize<List<SekaiApiModel.Sekai.UserEpisodeStatus>>(v, jsonOptions)!);
         modelBuilder.Entity<User>().Property(u => u.SpecialEpisodeStatuses).HasColumnType("jsonb")
@@ -110,5 +125,13 @@ public class AppDbContext : DbContext
             .HasConversion(v => JsonSerializer.Serialize(v, jsonOptions), v => JsonSerializer.Deserialize<List<SekaiApiModel.Sekai.UserCharacterMissionV2Status>>(v, jsonOptions)!);
         modelBuilder.Entity<User>().Property(u => u.Events).HasColumnType("jsonb")
             .HasConversion(v => JsonSerializer.Serialize(v, jsonOptions), v => JsonSerializer.Deserialize<List<SekaiApiModel.Sekai.UserEvent>>(v, jsonOptions)!);
+        
+        modelBuilder.Entity<UserArea>().Property(u => u.ActionSets).HasColumnType("jsonb")
+            .HasConversion(v => JsonSerializer.Serialize(v, jsonOptions), v => JsonSerializer.Deserialize<List<SekaiApiModel.Sekai.UserActionSet>>(v, jsonOptions)!);
+        modelBuilder.Entity<UserArea>().Property(u => u.AreaItems).HasColumnType("jsonb")
+            .HasConversion(v => JsonSerializer.Serialize(v, jsonOptions), v => JsonSerializer.Deserialize<List<SekaiApiModel.Sekai.UserAreaItem>>(v, jsonOptions)!);
+        
+        modelBuilder.Entity<UserCharacter>().Property(u => u.Costumes3Ds).HasColumnType("jsonb")
+            .HasConversion(v => JsonSerializer.Serialize(v, jsonOptions), v => JsonSerializer.Deserialize<List<CharacterCostume3D>>(v, jsonOptions)!);
     }
 }

@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using System.Collections.Generic;
+
 using SekaiApiModel.Sekai;
 
 namespace SelfHostSekai.Models;
@@ -35,8 +35,6 @@ public class User
     public UserAutoLive? AutoLive { get; set; }
 
     // 杂项 / 状态集合 (JSON)
-    public List<UserArea> Areas { get; set; } = new();
-    public List<UserActionSet> ActionSets { get; set; } = new();
     public List<UserEpisodeStatus> UnitEpisodeStatuses { get; set; } = new();
     public List<UserEpisodeStatus> SpecialEpisodeStatuses { get; set; } = new();
     public List<UserEpisodeStatus> CharacterProfileEpisodeStatuses { get; set; } = new();
@@ -52,4 +50,7 @@ public class User
     public ICollection<UserDeck> Decks { get; set; } = new List<UserDeck>();
     public ICollection<UserMusicResult> MusicResults { get; set; } = new List<UserMusicResult>();
     public ICollection<UserMusic> Musics { get; set; } = new List<UserMusic>();
+    public ICollection<UserArea> Areas { get; set; } = new List<UserArea>();
+    public ICollection<UserUnlock> Unlocks { get; set; } = new List<UserUnlock>();
+    public ICollection<UserCharacter> Characters { get; set; } = new List<UserCharacter>();
 }

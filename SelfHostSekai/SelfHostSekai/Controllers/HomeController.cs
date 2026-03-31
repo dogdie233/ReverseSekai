@@ -10,7 +10,7 @@ namespace SelfHostSekai.Controllers;
 
 [Authorize]
 [ApiController]
-[Route("api/{urlUserId:long}/home")]
+[Route("api/user/{urlUserId:long}/home")]
 public class HomeController : ControllerBase
 {
     private readonly ILogger<HomeController> _logger;

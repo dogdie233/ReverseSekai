@@ -27,7 +27,8 @@ class TrafficDecryptor:
         self.log_hosts = [
             "production-game-api.sekai.colorfulpalette.org",
             "game-version.sekai.colorfulpalette.org",
-            "production-cf2d2388-assetbundle.sekai.colorfulpalette.net",
+            # "production-cf2d2388-assetbundle.sekai.colorfulpalette.net",
+            "production-cf2d2388-assetbundle-info.sekai.colorfulpalette.org"
         ]
         
         self.target_hosts = set(self.api_hosts + self.log_hosts)

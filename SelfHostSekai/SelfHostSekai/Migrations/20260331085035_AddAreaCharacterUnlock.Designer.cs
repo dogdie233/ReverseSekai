@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using SelfHostSekai.Data;
@@ -11,9 +12,11 @@ using SelfHostSekai.Data;
 namespace SelfHostSekai.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260331085035_AddAreaCharacterUnlock")]
+    partial class AddAreaCharacterUnlock
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -206,10 +209,6 @@ namespace SelfHostSekai.Migrations
 
                     b.Property<int>("CharacterId")
                         .HasColumnType("integer");
-
-                    b.Property<string>("Costumes3Ds")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
 
                     b.Property<int>("Exp")
                         .HasColumnType("integer");

@@ -18,7 +18,7 @@ public class SystemController : ControllerBase
         return Ok(new SystemFullResponse
         {
             appVersions = [GameConstants.LatestSystemAppVersion],
-            serverDate = DateTimeOffset.Now.ToUnixTimeSeconds(),
+            serverDate = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
             timezone = timezone,
             fixedFlg = false,
             profile = "production",

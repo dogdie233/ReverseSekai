@@ -1,16 +1,19 @@
 using Microsoft.EntityFrameworkCore;
+
 using SelfHostSekai.Data;
 using SelfHostSekai.Models;
+
 using SekaiApiModel.Sekai;
+
 using System.Text;
 
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
 
 using SekaiMasterDb;
 
 using SelfHostSekai.Configuration;
-
-using UserMusic = SekaiApiModel.Sekai.UserMusic;
+using SelfHostSekai.Constants;
 
 namespace SelfHostSekai.Services;
 
@@ -24,17 +27,17 @@ public class SuiteUserService
     private readonly AppDbContext _dbContext;
     private readonly JwtService _jwtService;
     private readonly IOptions<UserInitOptions> _userInitOptions;
-    private readonly MasterData<MasterMusicVocal> _musicVocalMasterDb;
+    private readonly MasterDb _masterDb;
 
-    public SuiteUserService(AppDbContext dbContext, ILogger<SuiteUserService> logger, JwtService jwtService, IOptions<UserInitOptions> userInitOptions, MasterData<MasterMusicVocal> musicVocalMasterDb)
+    public SuiteUserService(AppDbContext dbContext, ILogger<SuiteUserService> logger, JwtService jwtService, IOptions<UserInitOptions> userInitOptions, MasterDb masterDb)
     {
         _dbContext = dbContext;
         _logger = logger;
         _jwtService = jwtService;
         _userInitOptions = userInitOptions;
-        _musicVocalMasterDb = musicVocalMasterDb;
+        _masterDb = masterDb;
     }
-    
+
     public async Task<bool> IsUserExistAsync(long userId)
     {
         return await _dbContext.Users.AnyAsync(u => u.Id == userId);
@@ -46,12 +49,17 @@ public class SuiteUserService
     public async Task<User?> GetUserWithoutTrackingAsync(long userId)
     {
         return await _dbContext.Users
+            .TagWith("Query User with all related data")
             .AsNoTracking()
+            .AsSplitQuery()
             .Include(u => u.Cards)
             .Include(u => u.Decks)
             .Include(u => u.Items)
             .Include(u => u.MusicResults)
             .Include(u => u.Musics)
+            .Include(u => u.Areas)
+            .Include(u => u.Unlocks)
+            .Include(u => u.Characters)
             .FirstOrDefaultAsync(u => u.Id == userId);
     }
 
@@ -70,6 +78,7 @@ public class SuiteUserService
     /// </summary>
     public SuiteUser BuildSuiteUserDto(User dbUser)
     {
+        var unlocks = dbUser.Unlocks.ToLookup(u => u.Category);
         return new SuiteUser
         {
             userRegistration = dbUser.RegistrationInfo,
@@ -79,75 +88,101 @@ public class SuiteUserService
             refreshableTypes = [],
             userTutorial = dbUser.TutorialInfo,
             userConfig = dbUser.Config,
-            userAreas = dbUser.Areas?.ToArray() ?? [],
+            userAreas = dbUser.Areas.Select(a => new SekaiApiModel.Sekai.UserArea
+                {
+                    areaId = a.AreaId,
+                    actionSets = a.ActionSets.ToArray(),
+                    areaItems = a.AreaItems.ToArray(),
+                    userAreaStatus = new UserAreaStatus
+                    {
+                        areaId = a.AreaId,
+                        status = ToSnakeCase(a.Status.ToString()),
+                        userAreaPlaylistStatus = a.PlaylistId == null
+                            ? null
+                            : new UserAreaPlaylistStatus
+                            {
+                                areaPlaylistId = a.PlaylistId.Value,
+                                status = ToSnakeCase(a.PlaylistStatus.ToString())
+                            }
+                    }
+                })
+                .ToArray(),
             userCards = dbUser.Cards.Select(c => new SekaiApiModel.Sekai.UserCard
-            {
-                userId = c.UserId,
-                cardId = c.CardId,
-                level = c.Level,
-                exp = c.Exp,
-                totalExp = c.TotalExp,
-                skillLevel = c.SkillLevel,
-                skillExp = c.SkillExp,
-                totalSkillExp = c.TotalSkillExp,
-                masterRank = c.MasterRank,
-                specialTrainingStatus = c.SpecialTrainingStatus == 1 ? "done" : "not_done",
-                defaultImage = c.DefaultImage == 1 ? "special_training" : "original",
-                duplicateCount = c.DuplicateCount,
-                createdAt = c.CreatedAt,
-                episodes = []
-            }).ToArray(),
+                {
+                    userId = c.UserId,
+                    cardId = c.CardId,
+                    level = c.Level,
+                    exp = c.Exp,
+                    totalExp = c.TotalExp,
+                    skillLevel = c.SkillLevel,
+                    skillExp = c.SkillExp,
+                    totalSkillExp = c.TotalSkillExp,
+                    masterRank = c.MasterRank,
+                    specialTrainingStatus = c.SpecialTrainingStatus == 1 ? "done" : "not_done",
+                    defaultImage = c.DefaultImage == 1 ? "special_training" : "original",
+                    duplicateCount = c.DuplicateCount,
+                    createdAt = c.CreatedAt,
+                    episodes = []
+                })
+                .ToArray(),
             userBonds = [],
             userDecks = dbUser.Decks.Select(d => new SekaiApiModel.Sekai.UserDeck
-            {
-                userId = d.UserId,
-                deckId = d.DeckId,
-                name = d.Name,
-                leader = d.Member1,
-                subLeader = d.Member2,
-                member1 = d.Member1,
-                member2 = d.Member2,
-                member3 = d.Member3,
-                member4 = d.Member4,
-                member5 = d.Member5
-            }).ToArray(),
-            userMusics = dbUser.Musics?.Select(m => new UserMusic
-            {
-                musicId = m.MusicId
-            }).ToArray() ?? [],
+                {
+                    userId = d.UserId,
+                    deckId = d.DeckId,
+                    name = d.Name,
+                    leader = d.Member1,
+                    subLeader = d.Member2,
+                    member1 = d.Member1,
+                    member2 = d.Member2,
+                    member3 = d.Member3,
+                    member4 = d.Member4,
+                    member5 = d.Member5
+                })
+                .ToArray(),
+            userMusics = dbUser.Musics?.Select(m => new SekaiApiModel.Sekai.UserMusic
+                {
+                    musicId = m.MusicId
+                })
+                .ToArray() ?? [],
             userMusicVocals = dbUser.Musics?.Select(m => new UserMusicVocal
-            {
-                musicId = m.MusicId, 
-                musicVocalId = m.VocalId
-            }).ToList() ?? [],
+                {
+                    musicId = m.MusicId,
+                    musicVocalId = m.VocalId
+                })
+                .ToList() ?? [],
             userMusicResults = dbUser.MusicResults.Select(m => new SekaiApiModel.Sekai.UserMusicResult
-            {
-                musicId = m.MusicId,
-                musicDifficultyType = ToSnakeCase(m.MusicDifficulty.ToString()),
-                playType = ToSnakeCase(m.PlayType.ToString()),
-                playResult = m.IsAllPerfect ? "full_perfect" : (m.IsFullCombo ? "full_combo" : (m.IsClear ? "clear" : "none")),
-                highScore = m.HighScore,
-                fullComboFlg = m.IsFullCombo || m.IsAllPerfect,
-                fullPerfectFlg = m.IsAllPerfect,
-                mvpCount = 0,
-                superStarCount = 0
-            }).ToArray(),
+                {
+                    musicId = m.MusicId,
+                    musicDifficultyType = ToSnakeCase(m.MusicDifficulty.ToString()),
+                    playType = ToSnakeCase(m.PlayType.ToString()),
+                    playResult = m.IsAllPerfect ? "full_perfect" : (m.IsFullCombo ? "full_combo" : (m.IsClear ? "clear" : "none")),
+                    highScore = m.HighScore,
+                    fullComboFlg = m.IsFullCombo || m.IsAllPerfect,
+                    fullPerfectFlg = m.IsAllPerfect,
+                    mvpCount = 0,
+                    superStarCount = 0
+                })
+                .ToArray(),
             userShops = dbUser.Shops?.ToArray() ?? [],
             userPracticeTickets = dbUser.Items.Where(i => i.ItemType == ItemType.PracticeTicket).Select(i => new UserPracticeTicket
-            {
-                practiceTicketId = i.ItemId,
-                quantity = i.Quantity
-            }).ToArray(),
+                {
+                    practiceTicketId = i.ItemId,
+                    quantity = i.Quantity
+                })
+                .ToArray(),
             userSkillPracticeTickets = dbUser.Items.Where(i => i.ItemType == ItemType.SkillPracticeTicket).Select(i => new UserSkillPracticeTicket
-            {
-                skillPracticeTicketId = i.ItemId,
-                quantity = i.Quantity
-            }).ToArray(),
+                {
+                    skillPracticeTicketId = i.ItemId,
+                    quantity = i.Quantity
+                })
+                .ToArray(),
             userMaterials = dbUser.Items.Where(i => i.ItemType == ItemType.Material).Select(i => new UserMaterial
-            {
-                materialId = i.ItemId,
-                quantity = i.Quantity
-            }).ToArray(),
+                {
+                    materialId = i.ItemId,
+                    quantity = i.Quantity
+                })
+                .ToArray(),
             userGachas = [],
             userGachaBonusPoints = [],
             userUnitEpisodeStatuses = dbUser.UnitEpisodeStatuses?.ToArray() ?? [],
@@ -155,9 +190,24 @@ public class SuiteUserService
             userCharacterProfileEpisodeStatuses = dbUser.CharacterProfileEpisodeStatuses?.ToArray() ?? [],
             userUnits = [],
             userPresents = [],
-            userCostume3dStatuses = [],
+            userCostume3dStatuses = unlocks[UnlockCategoryType.Costume3d].Select(u => new UserCostume3DStatus
+                {
+                    costume3dId = u.ItemId,
+                    obtainedAt = (long)u.UnlockAt,
+                    status = "available"
+                })
+                .ToArray(),
             userCostume3dShopItems = [],
-            userCharacterCostume3ds = [],
+            userCharacterCostume3ds = dbUser.Characters
+                .SelectMany(c => c.Costumes3Ds, (character, costume) => new UserCharacterCostume3D
+                {
+                    characterId = character.CharacterId,
+                    unit = ToSnakeCase(costume.Unit.ToString()),
+                    headCostume3dId = costume.HeadId,
+                    hairCostume3dId = costume.HairId,
+                    bodyCostume3dId = costume.BodyId,
+                })
+                .ToArray(),
             unreadUserTopics = dbUser.UnreadTopics?.ToArray() ?? [],
             userHomeBanners = [],
             userMaterialExchanges = [],
@@ -165,14 +215,28 @@ public class SuiteUserService
             userGachaCeilItems = [],
             userGachaCeilExchangeSubstituteCosts = [],
             userBoostItems = dbUser.Items.Where(i => i.ItemType == ItemType.BoostItem).Select(i => new UserBoostItem
-            {
-                boostItemId = i.ItemId,
-                quantity = i.Quantity
-            }).ToArray(),
-            userStamps = [],
+                {
+                    boostItemId = i.ItemId,
+                    quantity = i.Quantity
+                })
+                .ToArray(),
+            userStamps = unlocks[UnlockCategoryType.Stamp].Select(u => new UserStamp
+                {
+                    stampId = u.ItemId,
+                    obtainedAt = u.UnlockAt
+                })
+                .ToArray(),
             UserStampFavoriteTabs = [],
             userStampFavorites = [],
-            userCharacters = [],
+            userCharacters = dbUser.Characters.Select(c => new SekaiApiModel.Sekai.UserCharacter
+                {
+                    userId = dbUser.Id,
+                    characterId = c.CharacterId,
+                    characterRank = c.Rank,
+                    exp = c.Exp,
+                    totalExp = c.TotalExp,
+                })
+                .ToArray(),
             userCharacterMissions = dbUser.CharacterMissions?.ToArray() ?? [],
             userCharacterMissionStatuses = dbUser.CharacterMissionStatuses?.ToArray() ?? [],
             userMissionStatuses = [],
@@ -218,7 +282,12 @@ public class SuiteUserService
                 gachaTicketId = i.ItemId,
                 quantity = i.Quantity
             }).ToArray(),
-            userReleaseConditions = default,
+            userReleaseConditions = unlocks[UnlockCategoryType.ReleaseCondition].Select(u => new UserReleaseCondition
+            {
+                userId = dbUser.Id,
+                releaseConditionId = u.ItemId,
+                createdAt = (long)u.UnlockAt
+            }).ToArray(),
             newReleaseConditions = default,
             userPlatformInheritIos = default,
             userPlatformInheritAndroid = default,
@@ -262,7 +331,7 @@ public class SuiteUserService
             userRankMatchSeasons = default,
             userRankMatchResult = default,
             userGiftGachaWishes = default,
-            userActionSets = dbUser.ActionSets?.ToArray() ?? [],
+            userActionSets = null,
             userCategorizedGachaWishes = default,
             userBlocks = default,
             userAdRewards = default,
@@ -328,13 +397,50 @@ public class SuiteUserService
 
     public async Task<(User user, string credToken)> RegisterUser(long userId, string? platform, string? deviceModel, string? operatingSystem)
     {
+        var registerTimestamp = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var userInitConfig = _userInitOptions.Value;
         var defaultMembers = userInitConfig.CardIds.Take(5).ToArray();
-        
+
+        var characterIds = _masterDb.CharacterProfiles.Value.All.Select(c => c.characterId).ToHashSet();
+
+        var unlockCostume3Ds = _masterDb.Costume3ds.Value.All
+            .Where(c => c.howToObtain == userInitConfig.Costume3dUnlockDesc)
+            .ToArray();
+        var unlockCostume3dIds = unlockCostume3Ds
+            .Select(c => new UserUnlock
+            {
+                UserId = userId,
+                Category = UnlockCategoryType.Costume3d,
+                ItemId = c.id,
+                UnlockAt = registerTimestamp
+            })
+            .ToArray();
+        var unlockReleaseConditions = userInitConfig.ReleaseConditions
+            .Select(i => new UserUnlock
+            {
+                UserId = userId,
+                Category = UnlockCategoryType.ReleaseCondition,
+                ItemId = i,
+                UnlockAt = registerTimestamp
+            });
+        var unlockStamps = userInitConfig.StampIds
+            .Select(i => new UserUnlock
+            {
+                UserId = userId,
+                Category = UnlockCategoryType.Stamp,
+                ItemId = i,
+                UnlockAt = registerTimestamp
+            });
+
+        var unlocks = new List<UserUnlock>();
+        unlocks.AddRange(unlockCostume3dIds);
+        unlocks.AddRange(unlockReleaseConditions);
+        unlocks.AddRange(unlockStamps);
+
         var user = new User
         {
             Id = userId,
-            Name = "Player",
+            Name = userInitConfig.UserName,
             Rank = 1,
             Exp = 0,
             TotalExp = 0,
@@ -347,28 +453,35 @@ public class SuiteUserService
                 platform = platform,
                 deviceModel = deviceModel,
                 operatingSystem = operatingSystem,
-                registeredAt = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                registeredAt = registerTimestamp,
                 signature = _jwtService.GenerateUserIdToken(userId),
+            },
+            Config = GameConstants.UserInitUserConfig,
+            Currency = new ChargedCurrency
+            {
+                free = 0,
+                paid = 0,
+                paidUnitPrices = []
             },
             BoostInfo = new Boost
             {
                 current = 114,
-                recoveryAt = (ulong)DateTimeOffset.Now.AddMinutes(10).ToUnixTimeMilliseconds(),
+                recoveryAt = registerTimestamp,
             },
             TutorialInfo = new UserTutorial
             {
                 tutorialStatus = "start",
                 tutorialEndAt = 0,
             },
-            Musics = userInitConfig.MusicVocalIds.Select(id => new SelfHostSekai.Models.UserMusic
+            Musics = userInitConfig.MusicVocalIds.Select(id => new Models.UserMusic
                 {
                     UserId = userId,
                     VocalId = id,
-                    MusicId = _musicVocalMasterDb.GetById(id)?.musicId ?? -1
+                    MusicId = _masterDb.MusicVocals.Value.GetById(id)?.musicId ?? -1
                 })
                 .Where(m => m.MusicId != -1)
                 .ToArray(),
-            Cards = userInitConfig.CardIds.Select(id => new SelfHostSekai.Models.UserCard
+            Cards = userInitConfig.CardIds.Select(id => new Models.UserCard
                 {
                     UserId = userId,
                     CardId = id
@@ -376,7 +489,7 @@ public class SuiteUserService
                 .ToArray(),
             Decks =
             [
-                new SelfHostSekai.Models.UserDeck
+                new Models.UserDeck
                 {
                     UserId = userId,
                     DeckId = 1,
@@ -388,15 +501,48 @@ public class SuiteUserService
                     Member5 = defaultMembers[4]
                 }
             ],
+            Areas = GameConstants.BuildUserInitUserAreas(userId),
+            Unlocks = unlocks,
+            Characters = characterIds.Select(id => new Models.UserCharacter
+            {
+                UserId = userId,
+                CharacterId = id,
+                Costumes3Ds = GetCharacterCostume3Ds(id)
+            }).ToArray()
         };
         _dbContext.Users.Add(user);
-        
+
         await _dbContext.SaveChangesAsync();
         var credToken = _jwtService.GenerateCredToken(userId);
-        
+
         _logger.LogInformation("Registered new user with ID {UserId}", userId);
 
         return (user, credToken);
+
+        List<CharacterCostume3D> GetCharacterCostume3Ds(int characterId)
+        {
+            if (characterId == 21) // miku
+                return GameConstants.UserInitMikuCostume3Ds;
+            
+            return
+            [
+                new CharacterCostume3D
+                {
+                    Unit = characterId switch
+                    {
+                        >= 1 and <= 4 => CharacterCostume3D.UnitType.LightSound,
+                        >= 5 and <= 8 => CharacterCostume3D.UnitType.Idol,
+                        >= 9 and <= 12 => CharacterCostume3D.UnitType.Street,
+                        >= 13 and <= 16 => CharacterCostume3D.UnitType.ThemePark,
+                        >= 17 and <= 20 => CharacterCostume3D.UnitType.SchoolRefusal,
+                        _ => CharacterCostume3D.UnitType.Piapro
+                    },
+                    HeadId = unlockCostume3Ds.First(c => c.characterId == characterId && c.partType == "head").id,
+                    HairId = unlockCostume3Ds.First(c => c.characterId == characterId && c.partType == "hair").id,
+                    BodyId = unlockCostume3Ds.First(c => c.characterId == characterId && c.partType == "body").id,
+                }
+            ];
+        }
     }
 
     private static string ToSnakeCase(string text)
@@ -405,7 +551,7 @@ public class SuiteUserService
             throw new ArgumentNullException(nameof(text));
         if (text.Length < 2)
             return text.ToLowerInvariant();
-        
+
         var sb = new StringBuilder();
         sb.Append(char.ToLowerInvariant(text[0]));
         for (var i = 1; i < text.Length; ++i)
@@ -421,6 +567,7 @@ public class SuiteUserService
                 sb.Append(c);
             }
         }
+
         return sb.ToString();
     }
 

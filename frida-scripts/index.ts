@@ -3,7 +3,7 @@ import "frida-il2cpp-bridge";
 import dumpApiKey from "./commands/dumpApiKey";
 
 Il2Cpp.perform(() => {
-    const UnityEngine = Il2Cpp.Domain.assembly("UnityEngine.CoreModule").image;
+    const UnityEngine = Il2Cpp.domain.assembly("UnityEngine.CoreModule").image;
     const Debug = UnityEngine.class("UnityEngine.Debug");
 
     // Hook Debug.Log(object message)

@@ -15,7 +15,13 @@ public class UserRegisterController : ControllerBase
 {
     private readonly ILogger<UserRegisterController> _logger;
     private readonly SuiteUserService _suiteUserService;
-    
+
+    public UserRegisterController(SuiteUserService suiteUserService, ILogger<UserRegisterController> logger)
+    {
+        _suiteUserService = suiteUserService;
+        _logger = logger;
+    }
+
     [HttpPost]
     public async Task<IActionResult> Register([FromBody] UserAPIRequest request)
     {
