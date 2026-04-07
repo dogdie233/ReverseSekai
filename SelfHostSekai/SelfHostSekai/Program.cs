@@ -48,6 +48,12 @@ builder.Services.AddSekaiMasterDb();
 
 // App Services
 builder.Services.AddScoped<SuiteUserService>();
+builder.Services.AddScoped<JwtService>();
+builder.Services.AddScoped<UserTutorialService>();
+
+// Release Condition Framework
+builder.Services.AddScoped<SelfHostSekai.Services.ReleaseConditions.IReleaseConditionHandler, SelfHostSekai.Services.ReleaseConditions.Handlers.TopicReleaseConditionHandler>();
+builder.Services.AddScoped<SelfHostSekai.Services.ReleaseConditions.ReleaseConditionManager>();
 builder.Services.AddScoped<UserTutorialService>();
 builder.Services.AddScoped<JwtService>();
 

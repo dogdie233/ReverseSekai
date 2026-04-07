@@ -14,6 +14,7 @@ using SekaiMasterDb;
 
 using SelfHostSekai.Configuration;
 using SelfHostSekai.Constants;
+using SelfHostSekai.Services.ReleaseConditions;
 
 namespace SelfHostSekai.Services;
 
@@ -28,14 +29,16 @@ public class SuiteUserService
     private readonly JwtService _jwtService;
     private readonly IOptions<UserInitOptions> _userInitOptions;
     private readonly MasterDb _masterDb;
+    private readonly ReleaseConditionManager _releaseConditionManager;
 
-    public SuiteUserService(AppDbContext dbContext, ILogger<SuiteUserService> logger, JwtService jwtService, IOptions<UserInitOptions> userInitOptions, MasterDb masterDb)
+    public SuiteUserService(AppDbContext dbContext, ILogger<SuiteUserService> logger, JwtService jwtService, IOptions<UserInitOptions> userInitOptions, MasterDb masterDb, ReleaseConditionManager releaseConditionManager)
     {
         _dbContext = dbContext;
         _logger = logger;
         _jwtService = jwtService;
         _userInitOptions = userInitOptions;
         _masterDb = masterDb;
+        _releaseConditionManager = releaseConditionManager;
     }
 
     public async Task<bool> IsUserExistAsync(long userId)
@@ -415,14 +418,6 @@ public class SuiteUserService
                 UnlockAt = registerTimestamp
             })
             .ToArray();
-        var unlockReleaseConditions = userInitConfig.ReleaseConditions
-            .Select(i => new UserUnlock
-            {
-                UserId = userId,
-                Category = UnlockCategoryType.ReleaseCondition,
-                ItemId = i,
-                UnlockAt = registerTimestamp
-            });
         var unlockStamps = userInitConfig.StampIds
             .Select(i => new UserUnlock
             {
@@ -434,7 +429,6 @@ public class SuiteUserService
 
         var unlocks = new List<UserUnlock>();
         unlocks.AddRange(unlockCostume3dIds);
-        unlocks.AddRange(unlockReleaseConditions);
         unlocks.AddRange(unlockStamps);
 
         var user = new User
@@ -511,6 +505,11 @@ public class SuiteUserService
             }).ToArray()
         };
         _dbContext.Users.Add(user);
+
+        foreach (var conditionId in userInitConfig.ReleaseConditions)
+        {
+            await _releaseConditionManager.UnlockAsync(user, conditionId);
+        }
 
         await _dbContext.SaveChangesAsync();
         var credToken = _jwtService.GenerateCredToken(userId);
