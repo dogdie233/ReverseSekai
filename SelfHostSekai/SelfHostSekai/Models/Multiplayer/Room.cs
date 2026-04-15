@@ -1,4 +1,5 @@
 using SekaiApiModel.Global;
+using SekaiApiModel.CP.Realtime;
 
 namespace SelfHostSekai.Models.Multiplayer;
 

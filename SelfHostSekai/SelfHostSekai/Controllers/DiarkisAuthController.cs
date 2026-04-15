@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SekaiApiModel.CP.Realtime;
+using SekaiApiModel.Sekai;
 using SelfHostSekai.Services;
 using SelfHostSekai.Utils;
 using SelfHostSekai.Configuration;

@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py:*)",
+      "Bash(xargs grep:*)",
+      "Bash(python3:*)",
+      "Bash(where python3:*)",
+      "Bash(where python:*)",
+      "Bash(xargs -I {} basename {})",
+      "Bash(ls:*)",
+      "Bash(grep -E \"\\\\.cs$|^d\")",
+      "Bash(grep -E \"\\\\.\\(cs|json|csproj\\)$\")",
+      "Read(//tmp/**)",
+      "Bash(python:*)",
+      "Bash(grep -v '^$')",
+      "Bash(powershell:*)",
+      "Bash(node:*)",
+      "Bash(dotnet build:*)",
+      "Bash(grep:*)",
+      "mcp__ida-pro-mcp__survey_binary",
+      "mcp__ida-pro-mcp__find_regex",
+      "Bash(printf %s\\\\n:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(find:*)"
+    ]
+  }
+}
