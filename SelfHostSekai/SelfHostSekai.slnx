@@ -4,4 +4,5 @@
   <Project Path="SekaiMasterDb.SourceGenerator/SekaiMasterDb.SourceGenerator/SekaiMasterDb.SourceGenerator.csproj" />
   <Project Path="SekaiMasterDb/SekaiMasterDb.csproj" />
   <Project Path="SelfHostSekai/SelfHostSekai.csproj" />
+  <Project Path="DiarkisServer/DiarkisServer.csproj" />
 </Solution>

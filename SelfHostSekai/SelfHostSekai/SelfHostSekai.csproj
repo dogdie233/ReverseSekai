@@ -24,6 +24,7 @@
     <ItemGroup>
       <ProjectReference Include="..\SekaiApiModel.Jp\SekaiApiModel.Jp.csproj" />
       <ProjectReference Include="..\SekaiMasterDb\SekaiMasterDb.csproj" />
+      <ProjectReference Include="..\DiarkisServer\DiarkisServer.csproj" />
     </ItemGroup>
 
 </Project>

@@ -9,10 +9,10 @@ using SelfHostSekai.Cryptography;
 using SelfHostSekai.Data;
 using SelfHostSekai.Extensions;
 using SelfHostSekai.Formatters;
-using SelfHostSekai.Realtime;
-using SelfHostSekai.Realtime.Handlers;
 using SelfHostSekai.Services;
 using SelfHostSekai.Services.Multiplayer;
+
+using DiarkisServer;
 
 using Yitter.IdGenerator;
 
@@ -24,7 +24,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<CryptoOptions>(builder.Configuration.GetSection("Crypto"));
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<UserInitOptions>(builder.Configuration.GetSection("UserInit"));
-builder.Services.Configure<DiarkisOptions>(builder.Configuration.GetSection("Diarkis"));
 
 var cryptoOptions = builder.Configuration.GetRequiredSection("Crypto").Get<CryptoOptions>();
 if (cryptoOptions == null)
@@ -39,8 +38,6 @@ builder.Services.AddControllers(options =>
     options.OutputFormatters.Insert(0, new EncryptedMessagePackOutputFormatter(aesCryptoHelper));
 });
 
-builder.Services.AddMemoryCache();
-
 builder.Services.AddSekaiMasterDb();
 
 // ── Core services ──
@@ -52,14 +49,16 @@ builder.Services.AddScoped<UserTutorialService>();
 builder.Services.AddScoped<SelfHostSekai.Services.ReleaseConditions.IReleaseConditionHandler, SelfHostSekai.Services.ReleaseConditions.Handlers.TopicReleaseConditionHandler>();
 builder.Services.AddScoped<SelfHostSekai.Services.ReleaseConditions.ReleaseConditionManager>();
 
-// ── Multiplayer services ──
-builder.Services.AddScoped<IRoomService, RoomService>();
-builder.Services.AddScoped<IMatchmakingService, MatchmakingService>();
+// ── MultiLive HTTP business logic ──
 builder.Services.AddScoped<MultiLiveService>();
 
-// ── Realtime (WebSocket) ──
-builder.Services.AddSingleton<RealtimeServer>();
-builder.Services.AddScoped<RoomCommandHandler>();
+// ── Diarkis realtime server (UDP) ──
+var diarkisSection = builder.Configuration.GetSection("Diarkis");
+builder.Services.AddDiarkisServer(o =>
+{
+    o.UdpPort = diarkisSection.GetValue<int?>("UdpPort") ?? 7100;
+    o.Host = diarkisSection.GetValue<string>("Host") ?? "0.0.0.0";
+});
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -103,24 +102,10 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// ── WebSocket support ──
-app.UseWebSockets(new WebSocketOptions
-{
-    KeepAliveInterval = TimeSpan.FromSeconds(30)
-});
-
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-
-// ── Realtime WebSocket endpoint ──
-// Client connects: ws(s)://host/realtime?userId={id}&clientKey={key}&sid={sid}
-app.Map("/realtime", async context =>
-{
-    var server = context.RequestServices.GetRequiredService<RealtimeServer>();
-    await server.HandleWebSocketAsync(context);
-});
 
 app.MapForwarder(
     "/api/platform-android",
@@ -130,5 +115,8 @@ app.MapForwarder(
     "/6.3.5/*",
     "https://game-version.sekai.colorfulpalette.org"
 );
+
+// ── Start Diarkis UDP server alongside the HTTP host ──
+app.UseDiarkisServer();
 
 app.Run();

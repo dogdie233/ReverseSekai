@@ -1,6 +1,6 @@
 using SekaiApiModel.CP.Realtime;
 
-namespace SelfHostSekai.Models.Multiplayer;
+namespace DiarkisServer.Models;
 
 public class Room
 {

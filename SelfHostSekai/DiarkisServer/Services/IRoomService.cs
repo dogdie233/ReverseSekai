@@ -1,8 +1,7 @@
 using SekaiApiModel.CP.Realtime;
-using SekaiApiModel.Global;
-using SelfHostSekai.Models.Multiplayer;
+using DiarkisServer.Models;
 
-namespace SelfHostSekai.Services.Multiplayer;
+namespace DiarkisServer.Services;
 
 public interface IRoomService
 {
