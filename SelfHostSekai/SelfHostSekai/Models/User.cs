@@ -53,4 +53,6 @@ public class User
     public ICollection<UserArea> Areas { get; set; } = new List<UserArea>();
     public ICollection<UserUnlock> Unlocks { get; set; } = new List<UserUnlock>();
     public ICollection<UserCharacter> Characters { get; set; } = new List<UserCharacter>();
+    public ICollection<UserPresent> Presents { get; set; } = new List<UserPresent>();
+    public ICollection<UserLoginBonus> LoginBonuses { get; set; } = new List<UserLoginBonus>();
 }

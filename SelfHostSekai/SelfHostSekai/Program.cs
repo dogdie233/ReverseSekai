@@ -13,18 +13,16 @@ using SelfHostSekai.Services;
 
 using Yitter.IdGenerator;
 
-// --- 雪花算法配置 ---
 var options = new IdGeneratorOptions(1);
 YitIdHelper.SetIdGenerator(options);
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Register Configuration
 builder.Services.Configure<CryptoOptions>(builder.Configuration.GetSection("Crypto"));
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<UserInitOptions>(builder.Configuration.GetSection("UserInit"));
+builder.Services.Configure<DiarkisOptions>(builder.Configuration.GetSection("Diarkis"));
 
-// Register CryptoHelper as Singleton
 var cryptoOptions = builder.Configuration.GetRequiredSection("Crypto").Get<CryptoOptions>();
 if (cryptoOptions == null)
     throw new InvalidOperationException("Crypto configuration is missing.");
@@ -32,36 +30,28 @@ if (cryptoOptions == null)
 var aesCryptoHelper = new AesCryptoHelper(cryptoOptions.AesKeyHex, cryptoOptions.AesIvHex);
 builder.Services.AddSingleton(aesCryptoHelper);
 
-// Add services to the container.
-
 builder.Services.AddControllers(options =>
 {
     options.InputFormatters.Insert(0, new EncryptedMessagePackInputFormatter(aesCryptoHelper));
     options.OutputFormatters.Insert(0, new EncryptedMessagePackOutputFormatter(aesCryptoHelper));
 });
 
-// Cache
 builder.Services.AddMemoryCache();
 
-// Master DB
 builder.Services.AddSekaiMasterDb();
 
-// App Services
 builder.Services.AddScoped<SuiteUserService>();
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<UserTutorialService>();
 
-// Release Condition Framework
 builder.Services.AddScoped<SelfHostSekai.Services.ReleaseConditions.IReleaseConditionHandler, SelfHostSekai.Services.ReleaseConditions.Handlers.TopicReleaseConditionHandler>();
 builder.Services.AddScoped<SelfHostSekai.Services.ReleaseConditions.ReleaseConditionManager>();
-builder.Services.AddScoped<UserTutorialService>();
-builder.Services.AddScoped<JwtService>();
 
-// PostgreSQL DB Context
+builder.Services.AddScoped<SelfHostSekai.Services.Multiplayer.IRoomService, SelfHostSekai.Services.Multiplayer.RoomService>();
+
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// JWT Authentication
 var jwtOptions = builder.Configuration.GetRequiredSection("Jwt").Get<JwtOptions>();
 if (jwtOptions == null)
     throw new InvalidOperationException("JWT configuration is missing.");
@@ -94,7 +84,6 @@ builder.Services.AddHttpForwarder();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();

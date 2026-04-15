@@ -18,6 +18,8 @@ public class AppDbContext : DbContext
     public DbSet<UserMusicResult> UserMusicResults { get; set; }
     public DbSet<UserMusic> UserMusics { get; set; }
     public DbSet<UserArea> UserAreas { get; set; }
+    public DbSet<UserPresent> UserPresents { get; set; }
+    public DbSet<UserLoginBonus> UserLoginBonuses { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -71,6 +73,25 @@ public class AppDbContext : DbContext
             .WithOne(m => m.User)
             .HasForeignKey(m => m.UserId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<User>()
+            .HasMany(u => u.Presents)
+            .WithOne(p => p.User)
+            .HasForeignKey(p => p.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<User>()
+            .HasMany(u => u.LoginBonuses)
+            .WithOne(lb => lb.User)
+            .HasForeignKey(lb => lb.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<UserLoginBonus>()
+            .Property(lb => lb.DisplayTexts)
+            .HasColumnType("jsonb")
+            .HasConversion(
+                v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
+                v => System.Text.Json.JsonSerializer.Deserialize<List<string>>(v, (System.Text.Json.JsonSerializerOptions?)null)!);
             
         // ==========================================
         // PostgreSQL JSONB 配置 (使用 ValueConverter)

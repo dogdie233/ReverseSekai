@@ -34,7 +34,8 @@ public class HomeController : ControllerBase
         var suiteUser = _userService.BuildSuiteUserDto(dbUser);
         var response = new UserHomeRefreshResponse
         {
-            updatedResources = suiteUser
+            updatedResources = suiteUser,
+            userLoginBonuses = suiteUser.userLoginBonuses
         };
         if (request.refreshableTypes.Contains("new_pending_friend_request"))
             response.newPendingUserFriends = [];

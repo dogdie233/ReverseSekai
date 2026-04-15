@@ -3,7 +3,6 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/.." vcs="Git" />
-    <mapping directory="$PROJECT_DIR$" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/../sekai-master-db-diff" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/SekaiMasterDb/sekai-master-db-diff" vcs="Git" />
   </component>
 </project>

@@ -27,6 +27,20 @@ public static class GameConstants
     ];
 
     public static readonly int[] ObtainedBondsRewardIds = [];
+
+    /// <summary>
+    /// 全部7个单位名称（对应 unitProfiles.json + "any" 虚拟单位）
+    /// </summary>
+    public static readonly string[] AllUnitNames =
+    [
+        "light_sound",
+        "idol",
+        "street",
+        "theme_park",
+        "school_refusal",
+        "piapro",
+        "any",
+    ];
     public static readonly SystemAppVersion LatestSystemAppVersion = new()
     {
         systemProfile = "production",
@@ -91,6 +105,44 @@ public static class GameConstants
             HeadId = 346,
             HairId = 221,
             BodyId = 347,
+        }
+    ];
+
+    public static readonly UserHomeBanner[] MockHomeBanners =
+    [
+        new UserHomeBanner
+        {
+            homeBannerId = 1342,
+            seq = 1,
+            homeBannerType = "general",
+            name = "公式サイト",
+            assetbundleName = "banner_official_store",
+            transitionDestinationType = "web",
+            transitionDestinationId = 0,
+            startAt = 1601391600000,
+            endAt = 4102412399000,
+            fromUserRank = 0,
+            toUserRank = 0,
+            url = "https://pjsekai.sega.jp/index.html"
+        }
+    ];
+
+    public static readonly UserNews[] MockUserNews =
+    [
+        new UserNews
+        {
+            id = 4,
+            seq = 40,
+            displayOrder = 19990,
+            informationType = "content",
+            informationTag = "update",
+            browseType = "external",
+            platform = "all",
+            title = "プロジェクトセカイ公式サイト",
+            path = "https://pjsekai.sega.jp/",
+            startAt = 1601391600000,
+            endAt = null,
+            bannerAssetbundleName = "content_banner_pjsekai_site_v2"
         }
     ];
 
