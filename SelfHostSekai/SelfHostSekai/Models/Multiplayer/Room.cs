@@ -1,4 +1,3 @@
-using SekaiApiModel.Global;
 using SekaiApiModel.CP.Realtime;
 
 namespace SelfHostSekai.Models.Multiplayer;
@@ -12,7 +11,7 @@ public class Room
     public DynamicPropertyPayload? RoomProperty { get; set; }
     public List<NetworkObject> NetworkObjects { get; set; } = new();
     public uint TTL { get; set; }
-    public int MaxMembers { get; set; } = 4;
+    public int MaxMembers { get; set; } = 5;
     public bool IsPrivate { get; set; }
     public int? PrivateRoomNumber { get; set; }
     public int? TotalPowerUpperLimit { get; set; }
@@ -20,7 +19,9 @@ public class Room
     public DateTime CreatedAt { get; set; }
     public DateTime? ExpiresAt { get; set; }
     public bool AllowEmpty { get; set; }
-    public string? LiveType { get; set; } // "MultiLive", "CheerfulLive", "RankLive"
+    public string? LiveType { get; set; }
+    public string? MatchingName { get; set; }
+    public bool IsMatchmakingOpen { get; set; } = true;
 }
 
 public class RoomPlayer

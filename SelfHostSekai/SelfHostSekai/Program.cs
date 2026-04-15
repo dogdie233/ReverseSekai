@@ -9,7 +9,10 @@ using SelfHostSekai.Cryptography;
 using SelfHostSekai.Data;
 using SelfHostSekai.Extensions;
 using SelfHostSekai.Formatters;
+using SelfHostSekai.Realtime;
+using SelfHostSekai.Realtime.Handlers;
 using SelfHostSekai.Services;
+using SelfHostSekai.Services.Multiplayer;
 
 using Yitter.IdGenerator;
 
@@ -40,14 +43,23 @@ builder.Services.AddMemoryCache();
 
 builder.Services.AddSekaiMasterDb();
 
+// ── Core services ──
 builder.Services.AddScoped<SuiteUserService>();
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<UserTutorialService>();
 
+// ── Release conditions ──
 builder.Services.AddScoped<SelfHostSekai.Services.ReleaseConditions.IReleaseConditionHandler, SelfHostSekai.Services.ReleaseConditions.Handlers.TopicReleaseConditionHandler>();
 builder.Services.AddScoped<SelfHostSekai.Services.ReleaseConditions.ReleaseConditionManager>();
 
-builder.Services.AddScoped<SelfHostSekai.Services.Multiplayer.IRoomService, SelfHostSekai.Services.Multiplayer.RoomService>();
+// ── Multiplayer services ──
+builder.Services.AddScoped<IRoomService, RoomService>();
+builder.Services.AddScoped<IMatchmakingService, MatchmakingService>();
+builder.Services.AddScoped<MultiLiveService>();
+
+// ── Realtime (WebSocket) ──
+builder.Services.AddSingleton<RealtimeServer>();
+builder.Services.AddScoped<RoomCommandHandler>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -91,13 +103,27 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// ── WebSocket support ──
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30)
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
 
+// ── Realtime WebSocket endpoint ──
+// Client connects: ws(s)://host/realtime?userId={id}&clientKey={key}&sid={sid}
+app.Map("/realtime", async context =>
+{
+    var server = context.RequestServices.GetRequiredService<RealtimeServer>();
+    await server.HandleWebSocketAsync(context);
+});
+
 app.MapForwarder(
-    "/api/platform-android", 
+    "/api/platform-android",
     "https://production-game-api.sekai.colorfulpalette.org"
 );
 app.MapForwarder(

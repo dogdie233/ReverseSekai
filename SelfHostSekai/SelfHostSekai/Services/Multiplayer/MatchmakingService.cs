@@ -8,6 +8,15 @@ public class MatchmakingService : IMatchmakingService
     private readonly IRoomService _roomService;
     private readonly ILogger<MatchmakingService> _logger;
 
+    /// <summary>
+    /// Power-range matching config from逆向:
+    ///   multi_live_power_range_upper_limit_init = 10000
+    ///   multi_live_power_range_spread_second     = 3000 (ms per iteration)
+    ///   multi_live_power_range_upper_limit_spread = 5000 (per iteration)
+    /// </summary>
+    private const int PowerRangeInit = 10000;
+    private const int PowerRangeSpread = 5000;
+
     public MatchmakingService(IRoomService roomService, ILogger<MatchmakingService> logger)
     {
         _roomService = roomService;
@@ -16,26 +25,28 @@ public class MatchmakingService : IMatchmakingService
 
     public async Task<List<Room>> SearchRoomsAsync(Dictionary<string, int> searchProps, string matchingName)
     {
-        try
-        {
-            var matchingRooms = new List<Room>();
+        var result = new List<Room>();
 
-            await foreach (var room in _roomService.GetAvailableRoomsAsync())
+        await foreach (var room in _roomService.GetAvailableRoomsAsync())
+        {
+            if (!string.IsNullOrEmpty(matchingName) && room.MatchingName != matchingName)
+                continue;
+
+            if (room.IsPrivate)
+                continue;
+
+            if (searchProps.Count > 0)
             {
-                if (ValidateSearchProps(room.RoomProperty?.values != null ? ConvertProperties(room.RoomProperty.values) : new(), searchProps))
-                {
-                    matchingRooms.Add(room);
-                }
+                var roomProps = ConvertProperties(room.RoomProperty?.values);
+                if (!ValidateSearchProps(roomProps, searchProps))
+                    continue;
             }
 
-            _logger.LogInformation("Found {Count} matching rooms for {MatchingName}", matchingRooms.Count, matchingName);
-            return matchingRooms;
+            result.Add(room);
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error searching rooms for {MatchingName}", matchingName);
-            return new List<Room>();
-        }
+
+        _logger.LogInformation("SearchRooms: found {Count} for {Name}", result.Count, matchingName);
+        return result;
     }
 
     public async Task<Room?> SearchJoinOrCreateAsync(
@@ -44,50 +55,39 @@ public class MatchmakingService : IMatchmakingService
         Dictionary<string, int> searchProps,
         string matchingName)
     {
-        try
+        var rooms = await SearchRoomsAsync(searchProps, matchingName);
+
+        foreach (var room in rooms)
         {
-            var availableRooms = await SearchRoomsAsync(searchProps, matchingName);
-
-            if (availableRooms.Count > 0)
+            if (await _roomService.JoinRoomAsync(room.RoomID, userId, initialData.playerProperty))
             {
-                var selectedRoom = availableRooms[0];
-                var joinSuccess = await _roomService.JoinRoomAsync(selectedRoom.RoomID, userId, initialData.playerProperty);
-                
-                if (joinSuccess)
-                {
-                    _logger.LogInformation("User {UserId} joined existing room {RoomId}", userId, selectedRoom.RoomID);
-                    return selectedRoom;
-                }
+                _logger.LogInformation("User {UserId} joined existing room {RoomId}", userId, room.RoomID);
+                return room;
             }
-
-            var newRoom = await _roomService.CreateRoomAsync(initialData, userId);
-            if (newRoom != null)
-            {
-                _logger.LogInformation("Created new room {RoomId} for user {UserId}", newRoom.RoomID, userId);
-            }
-
-            return newRoom;
         }
-        catch (Exception ex)
+
+        // No matching room → create
+        var newRoom = await _roomService.CreateRoomAsync(initialData, userId);
+        if (newRoom != null)
         {
-            _logger.LogError(ex, "Error in SearchJoinOrCreate for user {UserId}", userId);
-            return null;
+            newRoom.MatchingName = matchingName;
+            _logger.LogInformation("Created new room {RoomId} for {UserId}, matchingName={Name}",
+                newRoom.RoomID, userId, matchingName);
         }
+        return newRoom;
     }
 
     public Dictionary<string, int> ApplyScaleUp(Dictionary<string, int> currentProps, int iteration)
     {
-        var scaledProps = new Dictionary<string, int>(currentProps);
-
-        foreach (var key in scaledProps.Keys.ToList())
+        var scaled = new Dictionary<string, int>(currentProps);
+        foreach (var key in scaled.Keys.ToList())
         {
-            var originalValue = scaledProps[key];
-            var scaleFactor = (int)Math.Pow(1.5, iteration);
-            scaledProps[key] = Math.Max(0, originalValue - (originalValue / 10) * iteration);
+            var original = scaled[key];
+            // Each iteration widens the range by PowerRangeSpread
+            scaled[key] = Math.Max(0, original - PowerRangeSpread * iteration);
         }
-
-        _logger.LogInformation("Applied scale-up iteration {Iteration}", iteration);
-        return scaledProps;
+        _logger.LogDebug("ScaleUp iteration {Iter}: {Props}", iteration, scaled);
+        return scaled;
     }
 
     public bool ValidateSearchProps(Dictionary<string, int> playerProps, Dictionary<string, int> searchProps)
@@ -100,26 +100,23 @@ public class MatchmakingService : IMatchmakingService
             if (!playerProps.TryGetValue(key, out var playerValue))
                 return false;
 
-            if (Math.Abs(playerValue - searchValue) > searchValue / 10)
+            // Power-based matching: ±PowerRangeInit tolerance
+            if (Math.Abs(playerValue - searchValue) > PowerRangeInit)
                 return false;
         }
-
         return true;
     }
 
-    private Dictionary<string, int> ConvertProperties(Dictionary<int, byte[]> properties)
+    private static Dictionary<string, int> ConvertProperties(Dictionary<int, byte[]>? properties)
     {
         var result = new Dictionary<string, int>();
+        if (properties == null) return result;
 
         foreach (var (key, value) in properties)
         {
-            if (value.Length == 4)
-            {
-                var intValue = BitConverter.ToInt32(value, 0);
-                result[key.ToString()] = intValue;
-            }
+            if (value.Length >= 4)
+                result[key.ToString()] = BitConverter.ToInt32(value, 0);
         }
-
         return result;
     }
 }

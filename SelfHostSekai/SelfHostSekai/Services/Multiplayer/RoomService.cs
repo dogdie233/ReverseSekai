@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Caching.Memory;
 using SekaiApiModel.CP.Realtime;
 using SelfHostSekai.Models.Multiplayer;
@@ -10,19 +11,25 @@ public class RoomService : IRoomService
     private readonly ILogger<RoomService> _logger;
     private const string RoomCacheKeyPrefix = "room:";
 
+    /// <summary>
+    /// Global index of all active rooms. Key = RoomID.
+    /// Thread-safe: multiple WebSocket sessions may mutate rooms concurrently.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, Room> _roomIndex = new();
+
     public RoomService(IMemoryCache memoryCache, ILogger<RoomService> logger)
     {
         _memoryCache = memoryCache;
         _logger = logger;
     }
 
-
-    public async Task<Room?> CreateRoomAsync(RoomInitialData initialData, string userId)
+    public Task<Room?> CreateRoomAsync(RoomInitialData initialData, string userId)
     {
         try
         {
             var roomId = Guid.NewGuid().ToString("N");
             var roomCreateTime = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var ttl = (uint)(initialData.createOption?.roomTtl ?? 3600);
 
             var room = new Room
             {
@@ -32,12 +39,12 @@ public class RoomService : IRoomService
                 Players = new Dictionary<string, RoomPlayer>(),
                 RoomProperty = initialData.roomProperty,
                 NetworkObjects = new List<NetworkObject>(),
-                TTL = (uint)(initialData.createOption?.roomTtl ?? 3600),
-                MaxMembers = initialData.createOption?.maxMembers ?? 4,
+                TTL = ttl,
+                MaxMembers = initialData.createOption?.maxMembers ?? 5,
                 IsPrivate = initialData.createOption?.isPrivate ?? false,
                 AllowEmpty = initialData.createOption?.allowEmpty ?? false,
                 CreatedAt = DateTime.UtcNow,
-                ExpiresAt = DateTime.UtcNow.AddSeconds(initialData.createOption?.roomTtl ?? 3600)
+                ExpiresAt = DateTime.UtcNow.AddSeconds(ttl)
             };
 
             var ownerPlayer = new RoomPlayer
@@ -54,285 +61,209 @@ public class RoomService : IRoomService
             room.Players[userId] = ownerPlayer;
 
             var cacheOptions = new MemoryCacheEntryOptions()
-                .SetAbsoluteExpiration(TimeSpan.FromSeconds(room.TTL));
+                .SetAbsoluteExpiration(TimeSpan.FromSeconds(ttl))
+                .RegisterPostEvictionCallback((key, value, reason, state) =>
+                {
+                    if (value is Room r)
+                        _roomIndex.TryRemove(r.RoomID, out _);
+                });
 
             _memoryCache.Set(RoomCacheKeyPrefix + roomId, room, cacheOptions);
+            _roomIndex[roomId] = room;
 
-            _logger.LogInformation("Room created: {RoomId} by user {UserId}", roomId, userId);
-            return room;
+            _logger.LogInformation("Room created: {RoomId} by {UserId}, max={Max}, ttl={Ttl}s",
+                roomId, userId, room.MaxMembers, ttl);
+            return Task.FromResult<Room?>(room);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating room");
-            return null;
+            return Task.FromResult<Room?>(null);
         }
     }
 
-    public async Task<Room?> GetRoomAsync(string roomId)
+    public Task<Room?> GetRoomAsync(string roomId)
     {
-        try
+        if (_memoryCache.TryGetValue(RoomCacheKeyPrefix + roomId, out Room? room))
         {
-            if (_memoryCache.TryGetValue(RoomCacheKeyPrefix + roomId, out Room? room))
+            if (room?.ExpiresAt != null && room.ExpiresAt < DateTime.UtcNow)
             {
-                if (room?.ExpiresAt != null && room.ExpiresAt < DateTime.UtcNow)
-                {
-                    _memoryCache.Remove(RoomCacheKeyPrefix + roomId);
-                    return null;
-                }
-                return room;
+                RemoveRoom(roomId);
+                return Task.FromResult<Room?>(null);
             }
-            return null;
+            return Task.FromResult(room);
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting room {RoomId}", roomId);
-            return null;
-        }
+        // Cache miss but index hit → stale, clean up
+        _roomIndex.TryRemove(roomId, out _);
+        return Task.FromResult<Room?>(null);
     }
 
     public async Task<bool> JoinRoomAsync(string roomId, string userId, DynamicPropertyPayload? playerProperty)
     {
-        try
+        var room = await GetRoomAsync(roomId);
+        if (room == null) return false;
+        if (room.Players.Count >= room.MaxMembers) return false;
+        if (room.Players.ContainsKey(userId)) return true; // idempotent
+
+        var nextIndex = room.Players.Count;
+        room.Players[userId] = new RoomPlayer
         {
-            var room = await GetRoomAsync(roomId);
-            if (room == null)
-                return false;
+            UserID = userId,
+            Index = nextIndex,
+            IsOwner = false,
+            PlayerProperty = playerProperty,
+            PlayerNetworkObjects = new List<NetworkObject>(),
+            JoinedAt = DateTime.UtcNow,
+            TotalPower = 0
+        };
 
-            if (room.Players.Count >= room.MaxMembers)
-                return false;
-
-            if (room.Players.ContainsKey(userId))
-                return false;
-
-            var nextIndex = room.Players.Count;
-            var player = new RoomPlayer
-            {
-                UserID = userId,
-                Index = nextIndex,
-                IsOwner = false,
-                PlayerProperty = playerProperty,
-                PlayerNetworkObjects = new List<NetworkObject>(),
-                JoinedAt = DateTime.UtcNow,
-                TotalPower = 0
-            };
-
-            room.Players[userId] = player;
-
-            var cacheOptions = new MemoryCacheEntryOptions()
-                .SetAbsoluteExpiration(room.ExpiresAt!.Value - DateTime.UtcNow);
-
-            _memoryCache.Set(RoomCacheKeyPrefix + roomId, room, cacheOptions);
-
-            _logger.LogInformation("User {UserId} joined room {RoomId}", userId, roomId);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error joining room {RoomId}", roomId);
-            return false;
-        }
+        ReCache(room);
+        _logger.LogInformation("User {UserId} joined room {RoomId} (index={Idx})", userId, roomId, nextIndex);
+        return true;
     }
 
     public async Task<bool> LeaveRoomAsync(string roomId, string userId)
     {
-        try
+        var room = await GetRoomAsync(roomId);
+        if (room == null) return false;
+        if (!room.Players.Remove(userId)) return false;
+
+        if (room.Players.Count == 0 && !room.AllowEmpty)
         {
-            var room = await GetRoomAsync(roomId);
-            if (room == null)
-                return false;
-
-            if (!room.Players.Remove(userId))
-                return false;
-
-            if (room.Players.Count == 0 && !room.AllowEmpty)
-            {
-                _memoryCache.Remove(RoomCacheKeyPrefix + roomId);
-                return true;
-            }
-
-            if (room.OwnerID == userId && room.Players.Count > 0)
-            {
-                var newOwner = room.Players.Values.First();
-                room.OwnerID = newOwner.UserID;
-                newOwner.IsOwner = true;
-                _logger.LogInformation("Owner changed in room {RoomId} to {NewOwner}", roomId, newOwner.UserID);
-            }
-
-            var cacheOptions = new MemoryCacheEntryOptions()
-                .SetAbsoluteExpiration(room.ExpiresAt!.Value - DateTime.UtcNow);
-
-            _memoryCache.Set(RoomCacheKeyPrefix + roomId, room, cacheOptions);
-
-            _logger.LogInformation("User {UserId} left room {RoomId}", userId, roomId);
+            RemoveRoom(roomId);
             return true;
         }
-        catch (Exception ex)
+
+        // Transfer ownership
+        if (room.OwnerID == userId && room.Players.Count > 0)
         {
-            _logger.LogError(ex, "Error leaving room {RoomId}", roomId);
-            return false;
+            var newOwner = room.Players.Values.First();
+            room.OwnerID = newOwner.UserID;
+            newOwner.IsOwner = true;
+            _logger.LogInformation("Owner changed in {RoomId} → {NewOwner}", roomId, newOwner.UserID);
         }
+
+        ReCache(room);
+        _logger.LogInformation("User {UserId} left room {RoomId}", userId, roomId);
+        return true;
     }
 
     public async Task<RoomSyncData?> GetRoomStateAsync(string roomId)
     {
-        try
-        {
-            var room = await GetRoomAsync(roomId);
-            if (room == null)
-                return null;
+        var room = await GetRoomAsync(roomId);
+        if (room == null) return null;
 
-            var syncPlayers = room.Players.Values.Select(p => new RoomSyncPlayer
+        return new RoomSyncData
+        {
+            isJoin = true,
+            roomCreateTime = room.RoomCreateTime,
+            roomId = room.RoomID,
+            ownerId = room.OwnerID,
+            roomProperty = room.RoomProperty,
+            players = room.Players.Values.Select(p => new RoomSyncPlayer
             {
                 userId = p.UserID,
                 index = p.Index,
                 playerProperty = p.PlayerProperty
-            }).ToArray();
-
-            return new RoomSyncData
-            {
-                isJoin = true,
-                roomCreateTime = room.RoomCreateTime,
-                roomId = room.RoomID,
-                ownerId = room.OwnerID,
-                roomProperty = room.RoomProperty,
-                players = syncPlayers,
-                networkObjects = room.NetworkObjects.ToArray()
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting room state {RoomId}", roomId);
-            return null;
-        }
+            }).ToArray(),
+            networkObjects = room.NetworkObjects.ToArray()
+        };
     }
 
     public async Task<RoomSyncDataMinimal?> GetRoomStateMinimalAsync(string roomId, string userId)
     {
-        try
+        var room = await GetRoomAsync(roomId);
+        if (room == null) return null;
+        if (!room.Players.TryGetValue(userId, out var player)) return null;
+
+        return new RoomSyncDataMinimal
         {
-            var room = await GetRoomAsync(roomId);
-            if (room == null)
-                return null;
-
-            if (!room.Players.TryGetValue(userId, out var player))
-                return null;
-
-            var mySyncPlayer = new RoomSyncPlayer
+            isJoin = true,
+            roomCreateTime = room.RoomCreateTime,
+            roomId = room.RoomID,
+            ownerId = room.OwnerID,
+            roomProperty = room.RoomProperty,
+            mySyncPlayer = new RoomSyncPlayer
             {
                 userId = player.UserID,
                 index = player.Index,
                 playerProperty = player.PlayerProperty
-            };
-
-            var userIds = room.Players.Keys.ToArray();
-
-            return new RoomSyncDataMinimal
-            {
-                isJoin = true,
-                roomCreateTime = room.RoomCreateTime,
-                roomId = room.RoomID,
-                ownerId = room.OwnerID,
-                roomProperty = room.RoomProperty,
-                mySyncPlayer = mySyncPlayer,
-                userIds = userIds
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting minimal room state {RoomId}", roomId);
-            return null;
-        }
+            },
+            userIds = room.Players.Keys.ToArray()
+        };
     }
 
     public async Task UpdateRoomPropertyAsync(string roomId, DynamicPropertyPayload property)
     {
-        try
-        {
-            var room = await GetRoomAsync(roomId);
-            if (room == null)
-                return;
-
-            room.RoomProperty = property;
-
-            var cacheOptions = new MemoryCacheEntryOptions()
-                .SetAbsoluteExpiration(room.ExpiresAt!.Value - DateTime.UtcNow);
-
-            _memoryCache.Set(RoomCacheKeyPrefix + roomId, room, cacheOptions);
-
-            _logger.LogInformation("Room property updated for {RoomId}", roomId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error updating room property {RoomId}", roomId);
-        }
+        var room = await GetRoomAsync(roomId);
+        if (room == null) return;
+        room.RoomProperty = property;
+        ReCache(room);
     }
 
     public async Task UpdatePlayerPropertyAsync(string roomId, string userId, DynamicPropertyPayload property)
     {
-        try
-        {
-            var room = await GetRoomAsync(roomId);
-            if (room == null)
-                return;
-
-            if (!room.Players.TryGetValue(userId, out var player))
-                return;
-
-            player.PlayerProperty = property;
-
-            var cacheOptions = new MemoryCacheEntryOptions()
-                .SetAbsoluteExpiration(room.ExpiresAt!.Value - DateTime.UtcNow);
-
-            _memoryCache.Set(RoomCacheKeyPrefix + roomId, room, cacheOptions);
-
-            _logger.LogInformation("Player property updated for {UserId} in room {RoomId}", userId, roomId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error updating player property {RoomId}", roomId);
-        }
+        var room = await GetRoomAsync(roomId);
+        if (room == null) return;
+        if (!room.Players.TryGetValue(userId, out var player)) return;
+        player.PlayerProperty = property;
+        ReCache(room);
     }
 
-    public async Task<bool> ValidatePrivateRoomAccessAsync(Room room, int? privateRoomNumber)
+    public Task<bool> ValidatePrivateRoomAccessAsync(Room room, int? privateRoomNumber)
     {
-        try
-        {
-            if (!room.IsPrivate)
-                return true;
-
-            if (room.PrivateRoomNumber == null)
-                return false;
-
-            return room.PrivateRoomNumber == privateRoomNumber;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error validating private room access");
-            return false;
-        }
+        if (!room.IsPrivate) return Task.FromResult(true);
+        if (room.PrivateRoomNumber == null) return Task.FromResult(false);
+        return Task.FromResult(room.PrivateRoomNumber == privateRoomNumber);
     }
 
-    public async Task<bool> ValidatePowerLimitsAsync(Room room, int playerTotalPower)
+    public Task<bool> ValidatePowerLimitsAsync(Room room, int playerTotalPower)
     {
-        try
-        {
-            if (room.TotalPowerUpperLimit.HasValue && playerTotalPower > room.TotalPowerUpperLimit)
-                return false;
-
-            if (room.TotalPowerLowerLimit.HasValue && playerTotalPower < room.TotalPowerLowerLimit)
-                return false;
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error validating power limits");
-            return false;
-        }
+        if (room.TotalPowerUpperLimit.HasValue && playerTotalPower > room.TotalPowerUpperLimit)
+            return Task.FromResult(false);
+        if (room.TotalPowerLowerLimit.HasValue && playerTotalPower < room.TotalPowerLowerLimit)
+            return Task.FromResult(false);
+        return Task.FromResult(true);
     }
 
     public async IAsyncEnumerable<Room> GetAvailableRoomsAsync()
     {
-        yield break;
+        foreach (var kvp in _roomIndex)
+        {
+            var room = await GetRoomAsync(kvp.Key);
+            if (room != null
+                && room.IsMatchmakingOpen
+                && room.Players.Count < room.MaxMembers)
+            {
+                yield return room;
+            }
+        }
+    }
+
+    // ── helpers ──
+
+    private void ReCache(Room room)
+    {
+        var remaining = room.ExpiresAt!.Value - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            RemoveRoom(room.RoomID);
+            return;
+        }
+        var opts = new MemoryCacheEntryOptions()
+            .SetAbsoluteExpiration(remaining)
+            .RegisterPostEvictionCallback((key, value, reason, state) =>
+            {
+                if (value is Room r)
+                    _roomIndex.TryRemove(r.RoomID, out _);
+            });
+        _memoryCache.Set(RoomCacheKeyPrefix + room.RoomID, room, opts);
+        _roomIndex[room.RoomID] = room;
+    }
+
+    private void RemoveRoom(string roomId)
+    {
+        _memoryCache.Remove(RoomCacheKeyPrefix + roomId);
+        _roomIndex.TryRemove(roomId, out _);
     }
 }
